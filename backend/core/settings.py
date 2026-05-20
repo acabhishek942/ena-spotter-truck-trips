@@ -13,6 +13,18 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import platform
+
+if platform.system() == 'Darwin':
+    GDAL_LIBRARY_PATH = '/opt/homebrew/lib/libgdal.dylib'
+    GEOS_LIBRARY_PATH = '/opt/homebrew/lib/libgeos_c.dylib'
+    SPATIALITE_LIBRARY_PATH = '/opt/homebrew/lib/mod_spatialite.dylib'
+
+if platform.system() == 'Linux':
+    GDAL_LIBRARY_PATH = '/usr/lib/libgdal.so'
+    GEOS_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu/libgeos_c.so'
+    # Sometimes required for SpatiaLite on Linux:
+    # SPATIALITE_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu/mod_spatialite.so'
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -96,7 +108,7 @@ CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
+        'ENGINE': 'django.contrib.gis.db.backends.spatialite',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
