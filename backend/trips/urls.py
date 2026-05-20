@@ -1,6 +1,6 @@
 from django.urls import path
+from .views import TripPlanEngineView
 
 urlpatterns = [
-    # Placeholder path for your upcoming logic engine endpoint
-    # path('plan/', TripPlanEngineView.as_view(), name='trip-plan-evaluate'),
+    path('plan/', TripPlanEngineView.as_view(), name='trip-plan-evaluate'),
 ]
