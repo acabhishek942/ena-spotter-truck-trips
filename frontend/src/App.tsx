@@ -1,5 +1,8 @@
+// frontend/src/App.tsx
 import React, { useState } from 'react';
-import { TripPlannerInput } from './types';
+import { fetchTripPlan, type HOSResponse } from './api';
+import EldLogGrid from './components/EldLogGrid';
+import { type TripPlannerInput } from './types';
 
 export default function App() {
   const [formData, setFormData] = useState<TripPlannerInput>({
@@ -9,6 +12,10 @@ export default function App() {
     currentCycleUsed: 0,
   });
 
+  const [loading, setLoading] = useState(false);
+  const [hosData, setHosData] = useState<HOSResponse | null>(null);
+  const [error, setError] = useState('');
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -17,47 +24,70 @@ export default function App() {
     }));
   };
 
-  const handleFormSubmission = (e: React.FormEvent) => {
+  const handleFormSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Dispatched Telemetry Request to Django Engine:', formData);
-    // API Call pipeline integration hooks will insert here smoothly
+    setLoading(true);
+    setError('');
+    
+    try {
+      // For now, we mock the map distance payload. We will replace this with Mapbox/Leaflet data next.
+      const payload = {
+        ...formData,
+        totalMiles: 950.5,
+        totalDrivingHours: 14.5,
+      };
+      
+      const data = await fetchTripPlan(payload);
+      setHosData(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem', fontFamily: 'sans-serif' }}>
       <header style={{ borderBottom: '2px solid #eaeaea', paddingBottom: '1rem', marginBottom: '2rem' }}>
-        <h1 style={{ color: '#1a1a1a', margin: 0 }}>Automated ELD Log & Route Planner</h1>
-        <p style={{ color: '#666', margin: '0.5rem 0 0 0' }}>FMCSA 70-Hour / 8-Day Compliant Route Optimization Engine</p>
+        <h1 style={{ color: '#1a1a1a', margin: 0 }}>Automated ELD Log Planner</h1>
       </header>
 
       <main style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem' }}>
-        <section style={{ backgroundColor: '#f9f9f9', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-          <h2 style={{ fontSize: '1.25rem', marginTop: 0, marginBottom: '1.5rem' }}>Trip Parameters</h2>
+        <section style={{ backgroundColor: '#f9f9f9', padding: '1.5rem', borderRadius: '8px' }}>
+          <h2>Trip Parameters</h2>
           <form onSubmit={handleFormSubmission}>
+            {/* Same form inputs as before... */}
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Current Location</label>
-              <input type="text" name="currentLocation" value={formData.currentLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} required />
+               <label>Current Location</label>
+               <input type="text" name="currentLocation" value={formData.currentLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem' }} required />
             </div>
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Pickup Location</label>
-              <input type="text" name="pickupLocation" value={formData.pickupLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} required />
+               <label>Pickup Location</label>
+               <input type="text" name="pickupLocation" value={formData.pickupLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem' }} required />
             </div>
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Drop-off Location</label>
-              <input type="text" name="dropoffLocation" value={formData.dropoffLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} required />
+               <label>Drop-off Location</label>
+               <input type="text" name="dropoffLocation" value={formData.dropoffLocation} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem' }} required />
             </div>
             <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Current Cycle Used (Hours)</label>
-              <input type="number" name="currentCycleUsed" min="0" max="70" step="0.25" value={formData.currentCycleUsed} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} required />
+               <label>Current Cycle Used (Hrs)</label>
+               <input type="number" name="currentCycleUsed" min="0" step="0.25" value={formData.currentCycleUsed} onChange={handleInputChange} style={{ width: '100%', padding: '0.5rem' }} required />
             </div>
-            <button type="submit" style={{ width: '100%', padding: '0.75rem', backgroundColor: '#0066cc', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-              Generate Optimized Route & Logs
+            <button type="submit" disabled={loading} style={{ width: '100%', padding: '0.75rem', backgroundColor: '#0066cc', color: '#fff' }}>
+              {loading ? 'Calculating Route...' : 'Generate Logs'}
             </button>
           </form>
+          {error && <p style={{ color: 'red', marginTop: '1rem' }}>{error}</p>}
         </section>
 
-        <section style={{ border: '2px dashed #ccc', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-          Interactive Map and Programmatic ELD Log Output Layout Preview Pane
+        <section>
+          {hosData ? (
+             <EldLogGrid timeline={hosData.timeline} />
+          ) : (
+             <div style={{ border: '2px dashed #ccc', height: '100%', minHeight: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
+               Logs will generate here...
+             </div>
+          )}
         </section>
       </main>
     </div>
