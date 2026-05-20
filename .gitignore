@@ -1,0 +1,11 @@
+# Python compilation modules
+backend/venv/
+backend/__pycache__/
+backend/**/*.pyc
+backend/db.sqlite3
+backend/.env
+
+# Node deployment dependencies
+frontend/node_modules/
+frontend/dist/
+.DS_Store
