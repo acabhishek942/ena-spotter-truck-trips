@@ -1,55 +1,61 @@
-// frontend/src/components/LogSheetCarousel.tsx
-import React, { useState, useMemo } from 'react';
-import EldLogGrid from './EldLogGrid';
-import { chunkTimelineIntoDays, type TimelineEvent } from '../utils/hosTransformer';
+import React, { useState } from 'react';
+import EldLogGrid, { type BackendTimelineEvent } from './EldLogGrid';
 
 interface LogSheetCarouselProps {
-  continuousTimeline: TimelineEvent[];
+  continuousTimeline: BackendTimelineEvent[];
 }
 
-export default function LogSheetCarousel({ continuousTimeline }: LogSheetCarouselProps) {
-  const [currentDayIndex, setCurrentDayIndex] = useState(0);
+export default function LogSheetCarousel({ continuousTimeline = [] }: LogSheetCarouselProps) {
+  const [currentPageIndex, setCurrentPageIndex] = useState(0);
 
-  // Memoize the transformation so it only recalculates when new API data arrives
-  const dailySheets = useMemo(() => {
-    return chunkTimelineIntoDays(continuousTimeline);
-  }, [continuousTimeline]);
+  if (!continuousTimeline || continuousTimeline.length === 0) {
+    return <EldLogGrid timeline={[]} />;
+  }
 
-  if (dailySheets.length === 0) return null;
+  // Group timeline chunks into dedicated day frames (6 events per page layout threshold)
+  const segmentPageCapacity = 6;
+  const computedTotalPages = Math.ceil(continuousTimeline.length / segmentPageCapacity);
 
-  const currentSheet = dailySheets[currentDayIndex];
-  const isFirstDay = currentDayIndex === 0;
-  const isLastDay = currentDayIndex === dailySheets.length - 1;
+  const extractActiveTimelineChunk = () => {
+    const trackingOffsetStart = currentPageIndex * segmentPageCapacity;
+    return continuousTimeline.slice(trackingOffsetStart, trackingOffsetStart + segmentPageCapacity);
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+    <div className="w-full h-full flex flex-col gap-4">
       
-      {/* Pagination Controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+      {/* INTERNAL PAGINATION BAR CAROUSEL CONTROLLER */}
+      <div className="w-full bg-[#0d1324] border border-slate-800 p-3.5 rounded-xl flex items-center justify-between shadow-lg flex-shrink-0">
         <button 
-          onClick={() => setCurrentDayIndex(prev => prev - 1)}
-          disabled={isFirstDay}
-          style={{ padding: '0.5rem 1rem', cursor: isFirstDay ? 'not-allowed' : 'pointer', opacity: isFirstDay ? 0.5 : 1, fontWeight: 'bold' }}
+          type="button"
+          onClick={() => setCurrentPageIndex(prev => Math.max(0, prev - 1))}
+          disabled={currentPageIndex === 0}
+          className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-all disabled:opacity-20 cursor-pointer select-none"
         >
-          &larr; Previous Day
+          ← PREV SHEET
         </button>
         
-        <h3 style={{ margin: 0, color: '#2D3748' }}>
-          Day {currentSheet.dayNumber} of {dailySheets.length}
-        </h3>
-        
+        <div className="text-center">
+          <span className="text-sm font-bold text-white tracking-wide">
+            LOG SHEET PAGE {currentPageIndex + 1} <span className="text-slate-500 font-normal">/</span> {computedTotalPages || 1}
+          </span>
+        </div>
+
         <button 
-          onClick={() => setCurrentDayIndex(prev => prev + 1)}
-          disabled={isLastDay}
-          style={{ padding: '0.5rem 1rem', cursor: isLastDay ? 'not-allowed' : 'pointer', opacity: isLastDay ? 0.5 : 1, fontWeight: 'bold' }}
+          type="button"
+          onClick={() => setCurrentPageIndex(prev => Math.min(computedTotalPages - 1, prev + 1))}
+          disabled={currentPageIndex >= computedTotalPages - 1}
+          className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition-all disabled:opacity-20 cursor-pointer select-none"
         >
-          Next Day &rarr;
+          NEXT SHEET →
         </button>
       </div>
 
-      {/* Render the specific 24-hour grid for the selected day */}
-      <EldLogGrid timeline={currentSheet.events} />
-      
+      {/* DYNAMIC CANVAS WRAPPER PASSING TRANSFORMED VALUES */}
+      <div className="w-full flex-1 min-h-0">
+        <EldLogGrid timeline={extractActiveTimelineChunk()} />
+      </div>
+
     </div>
   );
 }

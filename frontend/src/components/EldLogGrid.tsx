@@ -1,7 +1,6 @@
-// frontend/src/components/EldLogGrid.tsx
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
-interface TimelineEvent {
+export interface BackendTimelineEvent {
   line: number;
   duration: number;
   location: string;
@@ -9,149 +8,93 @@ interface TimelineEvent {
 }
 
 interface EldLogGridProps {
-  timeline: TimelineEvent[];
+  timeline?: BackendTimelineEvent[];
 }
 
-export default function EldLogGrid({ timeline }: EldLogGridProps) {
-  // SVG Coordinate Math
-  const ROW_HEIGHT = 45;
-  const HOUR_WIDTH = 60; 
-  const TOTAL_HOURS_WIDTH = 24 * HOUR_WIDTH;
-  const REMARKS_START_Y = ROW_HEIGHT * 4;
-  const REMARKS_AREA_HEIGHT = 220; // Expanded to fit 4 levels of horizontal text
-  
-  // Padding to prevent any text or lines from clipping the SVG borders
-  const PADDING_X = 40;
-  const TOTAL_SVG_WIDTH = TOTAL_HOURS_WIDTH + (PADDING_X * 2);
+const ROW_LABELS: Record<number, string> = {
+  1: 'OFF DUTY', 2: 'SLEEPER BERTH', 3: 'DRIVING', 4: 'ON DUTY',
+};
+const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 
-  let currentX = 0;
-  const flagCoordinates: { x: number; label: string }[] = [];
+export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
+  const [currentDayIndex, setCurrentDayIndex] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const generatePath = () => {
-    let pathString = '';
-    currentX = 0;
+  const PIXELS_PER_HOUR = 120;
+  const PAGE_WIDTH = 24 * PIXELS_PER_HOUR;
+  const SVG_HEIGHT = 500;
 
-    timeline.forEach((event, index) => {
-      const segmentWidth = event.duration * HOUR_WIDTH;
-      const currentY = (event.line - 1) * ROW_HEIGHT + (ROW_HEIGHT / 2);
+  const accumulatedEvents = timeline.map((event, i, arr) => {
+    const startHour = arr.slice(0, i).reduce((sum, e) => sum + e.duration, 0);
+    return { ...event, startHour, endHour: startHour + event.duration };
+  });
 
-      if (index === 0) {
-        pathString += `M ${currentX} ${currentY} `;
-      } else {
-        flagCoordinates.push({
-          x: currentX,
-          label: `${event.location} - ${event.description}`
-        });
-        pathString += `V ${currentY} `;
+  const totalHours = accumulatedEvents.length > 0 ? accumulatedEvents[accumulatedEvents.length - 1].endHour : 0;
+  const totalPages = Math.ceil(totalHours / 24) || 1;
+  const SVG_WIDTH = Math.max(totalHours * PIXELS_PER_HOUR, PAGE_WIDTH);
+
+  // Sync state with scroll
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ left: currentDayIndex * PAGE_WIDTH, behavior: 'smooth' });
+    }
+  }, [currentDayIndex]);
+
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
+      if (newIndex !== currentDayIndex && newIndex >= 0 && newIndex < totalPages) {
+        setCurrentDayIndex(newIndex);
       }
-
-      currentX += segmentWidth;
-      pathString += `H ${currentX} `;
-    });
-
-    return pathString;
+    }
   };
 
-  const pathData = generatePath();
+  const summary = timeline.reduce((acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }), {} as any);
 
   return (
-    <div style={{
-      overflowX: 'auto',
-      background: '#FFFFFF',
-      padding: '2rem',
-      borderRadius: '8px',
-      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-      border: '1px solid #E2E8F0'
-    }}>
-      <h3 style={{ marginTop: 0, color: '#1A202C', fontFamily: 'system-ui, sans-serif', letterSpacing: '-0.5px' }}>
-        Record of Duty Status (RODS)
-      </h3>
-      
-      <div style={{ display: 'flex', position: 'relative', marginTop: '1.5rem' }}>
-        {/* Row Labels */}
-        <div style={{ width: '120px', flexShrink: 0, display: 'flex', flexDirection: 'column', fontWeight: '600', fontSize: '0.85rem', color: '#4A5568' }}>
-          <div style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center' }}>1: Off-Duty</div>
-          <div style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center' }}>2: Sleeper Berth</div>
-          <div style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center' }}>3: Driving</div>
-          <div style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center' }}>4: On-Duty</div>
-          <div style={{ height: REMARKS_AREA_HEIGHT, display: 'flex', alignItems: 'flex-start', paddingTop: '20px', color: '#A0AEC0', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-            Remarks
-          </div>
+    <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden relative">
+      <div className="bg-[#0a0f1d] p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex gap-6">
+          {[1,2,3,4].map(l => (
+            <div key={l}><div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div><div className="text-sm font-black text-blue-400">{(summary[l] || 0).toFixed(1)}h</div></div>
+          ))}
         </div>
+        <select value={currentDayIndex} onChange={(e) => setCurrentDayIndex(Number(e.target.value))} className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer">
+          {Array.from({ length: totalPages }).map((_, i) => <option key={i} value={i}>Day {i + 1}</option>)}
+        </select>
+      </div>
 
-        {/* The SVG Container */}
-        <div style={{ position: 'relative', width: TOTAL_SVG_WIDTH }}>
-          <svg width={TOTAL_SVG_WIDTH} height={REMARKS_START_Y + REMARKS_AREA_HEIGHT} style={{ backgroundColor: '#F8FAFC', borderRadius: '4px', border: '1px solid #E2E8F0' }}>
-            
-            {/* We wrap everything inside a <g> (Group) tag and translate it by PADDING_X.
-              This acts like CSS padding for SVG, ensuring nothing touches the absolute edges.
-            */}
-            <g transform={`translate(${PADDING_X}, 0)`}>
-              
-              {/* Draw Vertical Grid Lines (Hours & 15-min increments) */}
-              {[...Array(25)].map((_, i) => (
-                <React.Fragment key={`v-${i}`}>
-                  <line x1={i * HOUR_WIDTH} y1={0} x2={i * HOUR_WIDTH} y2={REMARKS_START_Y} stroke="#CBD5E0" strokeWidth={1.5} />
-                  {i < 24 && [1, 2, 3].map(q => (
-                     <line key={`vq-${i}-${q}`} x1={i * HOUR_WIDTH + (q * (HOUR_WIDTH/4))} y1={0} x2={i * HOUR_WIDTH + (q * (HOUR_WIDTH/4))} y2={REMARKS_START_Y} stroke="#E2E8F0" strokeWidth={0.75} />
-                  ))}
-                  {/* Hour Markers at the bottom of the grid */}
-                  <text x={i * HOUR_WIDTH} y={REMARKS_START_Y + 15} fontSize="10" fill="#A0AEC0" textAnchor="middle">
-                    {i}
-                  </text>
-                </React.Fragment>
-              ))}
+      <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d]">
+        <button onClick={() => setCurrentDayIndex(p => Math.max(0, p - 1))} disabled={currentDayIndex === 0} className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30">← PREV</button>
+        <span className="text-xs font-bold text-blue-400 flex items-center">DAY {currentDayIndex + 1} / {totalPages}</span>
+        <button onClick={() => setCurrentDayIndex(p => Math.min(totalPages - 1, p + 1))} disabled={currentDayIndex >= totalPages - 1} className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30">NEXT →</button>
+      </div>
 
-              {/* Draw Horizontal Grid Lines (Rows) */}
-              {[1, 2, 3].map((i) => (
-                <line key={`h-${i}`} x1={0} y1={i * ROW_HEIGHT} x2={TOTAL_HOURS_WIDTH} y2={i * ROW_HEIGHT} stroke="#CBD5E0" strokeWidth={1.5} />
-              ))}
-
-              {/* Draw the HOS Tracking Path */}
-              <path d={pathData} fill="none" stroke="#2B6CB0" strokeWidth={4} strokeLinejoin="round" />
-              
-              {/* Draw the Staggered Horizontal Elbow Remarks */}
-              {flagCoordinates.map((flag, index) => {
-                // Cycle through 4 different drop depths so horizontal text never overlaps
-                const depthLevel = index % 4; 
-                const staggerDrop = 40 + (depthLevel * 45); 
-
-                // If the flag is on the right half of the board, draw the elbow pointing left to prevent right-edge clipping
-                const isRightSide = flag.x > (TOTAL_HOURS_WIDTH * 0.6);
-                const elbowDirection = isRightSide ? -15 : 15;
-                const textAnchor = isRightSide ? "end" : "start";
-                const textPadding = isRightSide ? -5 : 5;
-
-                return (
-                  <g key={`flag-${index}`}>
-                    {/* Vertical Drop Line */}
-                    <line 
-                      x1={flag.x} y1={REMARKS_START_Y} 
-                      x2={flag.x} y2={REMARKS_START_Y + staggerDrop} 
-                      stroke="#718096" strokeWidth={1.5} strokeDasharray="4,4" 
-                    />
-                    {/* Horizontal Elbow Connector */}
-                    <line 
-                      x1={flag.x} y1={REMARKS_START_Y + staggerDrop} 
-                      x2={flag.x + elbowDirection} y2={REMARKS_START_Y + staggerDrop} 
-                      stroke="#4A5568" strokeWidth={2} 
-                    />
-                    {/* Horizontal Text Label */}
-                    <text
-                      x={flag.x + elbowDirection + textPadding}
-                      y={REMARKS_START_Y + staggerDrop + 4} // +4 for vertical optical alignment
-                      textAnchor={textAnchor}
-                      fontSize="11"
-                      fontFamily="system-ui, sans-serif"
-                      fontWeight="500"
-                      fill="#2D3748"
-                    >
-                      {flag.label}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]">
+        <div className="absolute left-0 top-[180px] w-[160px] z-10 flex flex-col bg-[#050811]">
+          {[1, 2, 3, 4].map(l => <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">{ROW_LABELS[l]}</div>)}
+        </div>
+        <div style={{ width: `${SVG_WIDTH + 200}px`, height: '100%' }}>
+          <svg width={SVG_WIDTH + 200} height={SVG_HEIGHT} style={{ overflow: 'visible' }}>
+            {Array.from({ length: Math.ceil(totalHours) + 1 }).map((_, i) => (
+              <g key={i}>
+                <line x1={i * PIXELS_PER_HOUR} y1="40" x2={i * PIXELS_PER_HOUR} y2="360" stroke="#1e293b" strokeWidth="1" />
+                <text x={i * PIXELS_PER_HOUR} y="380" className="text-[10px] fill-slate-500" textAnchor="middle">{`${String(i % 24).padStart(2, '0')}:00`}</text>
+              </g>
+            ))}
+            {[1, 2, 3, 4].map(l => <line key={l} x1="0" y1={ROW_Y[l]} x2={SVG_WIDTH} y2={ROW_Y[l]} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" />)}
+            <path d={accumulatedEvents.reduce((d, e, i) => {
+              const startX = e.startHour * PIXELS_PER_HOUR, endX = e.endHour * PIXELS_PER_HOUR, y = ROW_Y[e.line];
+              return d + (i === 0 ? `M ${startX} ${y} L ${endX} ${y}` : ` L ${startX} ${y} L ${endX} ${y}`);
+            }, "")} stroke="#38bdf8" strokeWidth="6" fill="none" />
+            {accumulatedEvents.map((e, i) => (
+              <g key={i}>
+                <circle cx={e.startHour * PIXELS_PER_HOUR} cy={ROW_Y[e.line]} r="5" fill="#38bdf8" />
+                <line x1={e.startHour * PIXELS_PER_HOUR} y1={ROW_Y[e.line]} x2={e.startHour * PIXELS_PER_HOUR} y2="420" stroke="#38bdf8" strokeDasharray="4 4" opacity="0.5" />
+                <text x={e.startHour * PIXELS_PER_HOUR + 5} y="440" className="text-[10px] fill-blue-400 font-bold uppercase" transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 440)`}>{e.location}</text>
+                <text x={e.startHour * PIXELS_PER_HOUR + 5} y="460" className="text-[10px] fill-slate-400 italic" transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 460)`}>{e.description}</text>
+              </g>
+            ))}
           </svg>
         </div>
       </div>
