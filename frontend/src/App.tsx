@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { fetchTripPlan, type HOSResponse } from './api';
 import EldLogGrid from './components/EldLogGrid';
+import LogSheetCarousel from './components/LogSheetCarousel';
 import { type TripPlannerInput } from './types';
 import { geocodeAddress, fetchRoute, type RouteData } from './services/mapService';
 import RouteMapVisualizer from './components/RouteMapVisualizer';
@@ -36,21 +37,27 @@ const handleFormSubmission = async (e: React.FormEvent) => {
     setError('');
     
     try {
-      // 1. Geocode the addresses
+      // 1. Geocode all 3 addresses
+      const currentCoords = await geocodeAddress(formData.currentLocation);
       const pickupCoords = await geocodeAddress(formData.pickupLocation);
       const dropoffCoords = await geocodeAddress(formData.dropoffLocation);
 
-      // 2. Fetch the real driving route from OSRM
+      // 2. Fetch the 3-point driving route
       setLoadingStatus('Calculating route distance...');
-      const mapRoute = await fetchRoute(pickupCoords, dropoffCoords);
+      const mapRoute = await fetchRoute(currentCoords, pickupCoords, dropoffCoords);
       setRouteData(mapRoute);
 
-      // 3. Send the REAL calculated data to our Django HOS Engine
+      // 3. Send the split deadhead/transit data to Django
       setLoadingStatus('Generating FMCSA compliance logs...');
       const payload = {
-        ...formData,
-        totalMiles: mapRoute.distanceMiles,
-        totalDrivingHours: mapRoute.durationHours,
+        currentLocation: formData.currentLocation,
+        pickupLocation: formData.pickupLocation,
+        dropoffLocation: formData.dropoffLocation,
+        currentCycleUsed: formData.currentCycleUsed,
+        deadheadMiles: mapRoute.deadheadDistance,
+        deadheadHours: mapRoute.deadheadDuration,
+        transitMiles: mapRoute.transitDistance,
+        transitHours: mapRoute.transitDuration,
       };
       
       const hosResponse = await fetchTripPlan(payload);
@@ -101,7 +108,8 @@ const handleFormSubmission = async (e: React.FormEvent) => {
           {routeData ? (
              <>
                <RouteMapVisualizer routeData={routeData} />
-               {hosData && <EldLogGrid timeline={hosData.timeline} />}
+               {/* {hosData && <EldLogGrid timeline={hosData.timeline} />} */}
+               {hosData && <LogSheetCarousel continuousTimeline={hosData.timeline} />}
              </>
           ) : (
              <div style={{ border: '2px dashed #ccc', height: '100%', minHeight: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>

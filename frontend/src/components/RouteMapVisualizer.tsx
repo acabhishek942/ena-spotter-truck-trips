@@ -8,6 +8,7 @@ interface RouteMapProps {
     coordinates: [number, number][];
     pickupCoords: [number, number];
     dropoffCoords: [number, number];
+    currentCoords: [number, number];
   };
 }
 
@@ -41,6 +42,11 @@ export default function RouteMapVisualizer({ routeData }: RouteMapProps) {
             
             {/* The Driving Route */}
             <Polyline positions={routeData.coordinates} color="#2B6CB0" weight={5} opacity={0.8} />
+
+            {/* Current Location Marker (Deadhead Start) */}
+            <CircleMarker center={routeData.currentCoords} radius={8} pathOptions={{ fillColor: '#ECC94B', color: '#fff', weight: 2, fillOpacity: 1 }}>
+              <Tooltip permanent direction="top">Start</Tooltip>
+            </CircleMarker>
             
             {/* Pickup Marker */}
             <CircleMarker center={routeData.pickupCoords} radius={8} pathOptions={{ fillColor: '#48BB78', color: '#fff', weight: 2, fillOpacity: 1 }}>
