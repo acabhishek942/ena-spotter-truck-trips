@@ -7,7 +7,8 @@ from .services.hos_engine import HOSEngine
 class TripPlanEngineView(APIView):
     """
     POST /api/v1/trips/plan/
-    Ingests trip telemetry, applies the 1000-mile fuel rule, and generates the HOS ELD logs.
+    Ingests 3-point trip telemetry (Current -> Pickup -> Dropoff),
+    applies the 1000-mile fuel rule, and generates the HOS ELD logs.
     """
     
     def post(self, request):
@@ -24,37 +25,43 @@ class TripPlanEngineView(APIView):
         # 1. Initialize the HOS Engine with the driver's current cycle
         engine = HOSEngine(initial_cycle_used=data['currentCycleUsed'])
         
-        # 2. Check Assessment Assumption: Fueling every 1,000 miles
-        # We calculate how many fuel stops are required based on the frontend's mileage.
-        total_miles = data['totalMiles']
-        fuel_stops_needed = int(total_miles // 1000)
-        
-        # 3. Pre-Trip & Loading
-        engine.log_event(4, engine.PRE_TRIP_HOURS, data['pickupLocation'], "Pre-Trip Inspection")
+        # 2. Pre-Trip at Current Location
+        engine.log_event(4, engine.PRE_TRIP_HOURS, data['currentLocation'], "Pre-Trip Inspection")
+
+        # 3. Deadhead Transit (Current Location -> Pickup)
+        if data['deadheadHours'] > 0:
+            engine.process_driving_segment(data['deadheadHours'], "Deadhead to Pickup")
+
+        # 4. Load at Pickup Location
+        # Ensure the driver has legal hours to load, force a reset if they burned them on the deadhead
+        engine.enforce_daily_reset_if_needed(data['pickupLocation'])
         engine.log_event(4, engine.LOAD_UNLOAD_HOURS, data['pickupLocation'], "Loading Freight")
 
-        # 4. Process Transit and Inject Fuel Stops
+        # 5. Process Main Transit with Fuel Stops (Pickup -> Drop-off)
+        # Calculate if fuel stops are needed based on the 1000-mile assumption rule
+        fuel_stops_needed = int(data['transitMiles'] // 1000)
+        
         if fuel_stops_needed > 0:
-            # Split the driving time evenly between fuel stops
-            hours_per_leg = data['totalDrivingHours'] / (fuel_stops_needed + 1)
+            # Divide the driving time evenly between the required fuel stops
+            hours_per_leg = data['transitHours'] / (fuel_stops_needed + 1)
             
-            for i in range(fuel_stops_needed):
-                engine.process_driving_segment(hours_per_leg, "En-Route")
+            for _ in range(fuel_stops_needed):
+                engine.process_driving_segment(hours_per_leg, "Loaded Transit")
                 # Add a 30-minute fuel stop (Line 4: On-Duty)
-                engine.log_event(4, 0.5, "En-Route Fuel Station", "Refueling (1000 Mile Rule)")
+                engine.log_event(4, 0.5, "En-Route", "Refueling (1000 Mile Rule)")
             
-            # Drive the remaining final leg
-            engine.process_driving_segment(hours_per_leg, "En-Route")
+            # Drive the remaining final leg to the destination
+            engine.process_driving_segment(hours_per_leg, "Loaded Transit")
         else:
-            # No fuel stops required, process the whole trip
-            engine.process_driving_segment(data['totalDrivingHours'], "En-Route")
+            # No fuel stops required, process the entire transit block
+            engine.process_driving_segment(data['transitHours'], "Loaded Transit")
 
-        # 5. Drop-off & Post-Trip
+        # 6. Unload & Post-Trip at Drop-off
         engine.enforce_daily_reset_if_needed(data['dropoffLocation'])
         engine.log_event(4, engine.LOAD_UNLOAD_HOURS, data['dropoffLocation'], "Unloading Freight")
         engine.log_event(4, engine.PRE_TRIP_HOURS, data['dropoffLocation'], "Post-Trip Inspection")
 
-        # 6. Return the generated timeline array to React
+        # 7. Return the generated timeline array to React
         return Response({
             "status": "success",
             "cycle_remaining": max(0, 70.0 - engine.cycle_used),
