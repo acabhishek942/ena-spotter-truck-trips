@@ -18,11 +18,11 @@ const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   
-  // 1. ADDED: A execution lock flag to prevent scroll loop feedback
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isProgrammaticScrolling = useRef(false);
-
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
   const PIXELS_PER_HOUR = 120;
   const PAGE_WIDTH = 24 * PIXELS_PER_HOUR;
   const SVG_HEIGHT = 500;
@@ -36,39 +36,54 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const totalPages = Math.ceil(totalHours / 24) || 1;
   const SVG_WIDTH = Math.max(totalHours * PIXELS_PER_HOUR, PAGE_WIDTH);
 
-  // Sync state with scroll
-  useEffect(() => {
+  // --- THE FIX: Direct Action Handler ---
+  // This completely replaces the useEffect. It safely updates the UI state AND drives the scroll simultaneously.
+  const navigateToDay = (newIndex: number) => {
+    setCurrentDayIndex(newIndex); // Instantly update buttons and dropdown UI
+
     if (scrollContainerRef.current) {
-      // 2. MODIFIED: Activate the programmatic scroll lock
-      isProgrammaticScrolling.current = true;
+      isProgrammaticScrolling.current = true; // Lock the scroll listener
       
+      // Perform the smooth animation
       scrollContainerRef.current.scrollTo({ 
-        left: currentDayIndex * PAGE_WIDTH, 
+        left: newIndex * PAGE_WIDTH, 
         behavior: 'smooth' 
       });
 
-      // 3. ADDED: Release the lock after the smooth scroll animation settles (typically 400ms)
-      const timeoutId = setTimeout(() => {
+      // Clear any existing timeouts to prevent race conditions
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      
+      // Give the browser plenty of time to finish the smooth scroll before unlocking
+      scrollTimeoutRef.current = setTimeout(() => {
         isProgrammaticScrolling.current = false;
-      }, 450);
-
-      return () => clearTimeout(timeoutId);
+      }, 800); 
     }
-  }, [currentDayIndex]);
+  };
 
+  // --- Cleaned up Scroll Handler ---
   const handleScroll = () => {
-    // 4. ADDED: Early exit guard if the scroll event was triggered programmatically by buttons/dropdown
+    // If the scroll was triggered by our buttons/dropdown, completely ignore it.
     if (isProgrammaticScrolling.current) return;
 
+    // Otherwise, this is a native manual scroll (like swiping on a trackpad).
+    // Calculate which day is currently visible and update the UI.
     if (scrollContainerRef.current) {
       const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
       if (newIndex !== currentDayIndex && newIndex >= 0 && newIndex < totalPages) {
-        setCurrentDayIndex(newIndex);
+        setCurrentDayIndex(newIndex); 
+        // Notice: This ONLY updates state now. It no longer triggers a programmatic scroll!
       }
     }
   };
 
   const summary = timeline.reduce((acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }), {} as any);
+
+  // Cleanup timeout on component unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
+  }, []);
 
   return (
     <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden relative">
@@ -78,18 +93,38 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
             <div key={l}><div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div><div className="text-sm font-black text-blue-400">{(summary[l] || 0).toFixed(1)}h</div></div>
           ))}
         </div>
-        <select value={currentDayIndex} onChange={(e) => setCurrentDayIndex(Number(e.target.value))} className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer">
+        {/* MODIFIED: Direct handler call */}
+        <select 
+          value={currentDayIndex} 
+          onChange={(e) => navigateToDay(Number(e.target.value))} 
+          className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer"
+        >
           {Array.from({ length: totalPages }).map((_, i) => <option key={i} value={i}>Day {i + 1}</option>)}
         </select>
       </div>
 
       <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d]">
-        <button onClick={() => setCurrentDayIndex(p => Math.max(0, p - 1))} disabled={currentDayIndex === 0} className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30">← PREV</button>
+        {/* MODIFIED: Direct handler call */}
+        <button 
+          onClick={() => navigateToDay(Math.max(0, currentDayIndex - 1))} 
+          disabled={currentDayIndex === 0} 
+          className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
+        >
+          ← PREV
+        </button>
         <span className="text-xs font-bold text-blue-400 flex items-center">DAY {currentDayIndex + 1} / {totalPages}</span>
-        <button onClick={() => setCurrentDayIndex(p => Math.min(totalPages - 1, p + 1))} disabled={currentDayIndex >= totalPages - 1} className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30">NEXT →</button>
+        {/* MODIFIED: Direct handler call */}
+        <button 
+          onClick={() => navigateToDay(Math.min(totalPages - 1, currentDayIndex + 1))} 
+          disabled={currentDayIndex >= totalPages - 1} 
+          className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
+        >
+          NEXT →
+        </button>
       </div>
 
       <div ref={scrollContainerRef} onScroll={handleScroll} className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]">
+        {/* --- Keep the rest of your exact SVG rendering logic below --- */}
         <div className="absolute left-0 top-[180px] w-[160px] z-10 flex flex-col bg-[#050811]">
           {[1, 2, 3, 4].map(l => <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">{ROW_LABELS[l]}</div>)}
         </div>
