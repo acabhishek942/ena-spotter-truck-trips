@@ -19,6 +19,9 @@ const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // 1. ADDED: A execution lock flag to prevent scroll loop feedback
+  const isProgrammaticScrolling = useRef(false);
 
   const PIXELS_PER_HOUR = 120;
   const PAGE_WIDTH = 24 * PIXELS_PER_HOUR;
@@ -36,11 +39,27 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   // Sync state with scroll
   useEffect(() => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({ left: currentDayIndex * PAGE_WIDTH, behavior: 'smooth' });
+      // 2. MODIFIED: Activate the programmatic scroll lock
+      isProgrammaticScrolling.current = true;
+      
+      scrollContainerRef.current.scrollTo({ 
+        left: currentDayIndex * PAGE_WIDTH, 
+        behavior: 'smooth' 
+      });
+
+      // 3. ADDED: Release the lock after the smooth scroll animation settles (typically 400ms)
+      const timeoutId = setTimeout(() => {
+        isProgrammaticScrolling.current = false;
+      }, 450);
+
+      return () => clearTimeout(timeoutId);
     }
   }, [currentDayIndex]);
 
   const handleScroll = () => {
+    // 4. ADDED: Early exit guard if the scroll event was triggered programmatically by buttons/dropdown
+    if (isProgrammaticScrolling.current) return;
+
     if (scrollContainerRef.current) {
       const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
       if (newIndex !== currentDayIndex && newIndex >= 0 && newIndex < totalPages) {
