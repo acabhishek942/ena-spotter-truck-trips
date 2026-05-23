@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export interface BackendTimelineEvent {
   line: number;
@@ -14,233 +14,164 @@ interface EldLogGridProps {
 const ROW_LABELS: Record<number, string> = {
   1: 'OFF DUTY', 2: 'SLEEPER BERTH', 3: 'DRIVING', 4: 'ON DUTY',
 };
-const ROW_COLORS: Record<number, string> = {
-  1: '#64748b', 2: '#8b5cf6', 3: '#38bdf8', 4: '#f59e0b',
-};
-const ROWS = [1, 2, 3, 4];
-
-const COL_W   = 48;
-const SVG_W   = 24 * COL_W;
-const ROW_H   = 56;
-const TOP_PAD = 32;
-const SVG_H   = TOP_PAD + ROWS.length * ROW_H + 24;
-const rowMid  = (ri: number) => TOP_PAD + ri * ROW_H + ROW_H / 2;
+// Precise Y coordinates for the 4 rows
+const ROW_Y: Record<number, number> = { 1: 60, 2: 140, 3: 220, 4: 300 };
+const SVG_HEIGHT = 450;
 
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
-  const [currentDay, setCurrentDay] = useState(0);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; ev: typeof accumulated[0] } | null>(null);
+  const [currentDayIndex, setCurrentDayIndex] = useState(0);
+  
+  // THE FIX: Refs and State to track the exact width of the user's screen
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const [gridWidth, setGridWidth] = useState(800); // Default fallback width
 
-  // Build accumulated events
-  const accumulated = (() => {
-    const result: (BackendTimelineEvent & { startHour: number; endHour: number })[] = [];
-    let cursor = 0;
-    for (const ev of timeline) {
-      result.push({ ...ev, startHour: cursor, endHour: cursor + ev.duration });
-      cursor += ev.duration;
-    }
-    return result;
-  })();
+  // Dynamically measure the container so the 24 hours fit exactly without a scrollbar
+  useEffect(() => {
+    if (!gridContainerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      // Subtract a small buffer (20px) to ensure no edge bleed
+      setGridWidth(entries[0].contentRect.width - 20); 
+    });
+    observer.observe(gridContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-  const totalHours = accumulated.length > 0 ? accumulated[accumulated.length - 1].endHour : 0;
-  const totalDays  = Math.ceil(totalHours / 24) || 1;
+  // Now, 1 hour dynamically shrinks or grows to fit the screen
+  const PIXELS_PER_HOUR = gridWidth / 24;
 
-  const summary = timeline.reduce(
-    (acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }),
-    {} as Record<number, number>
-  );
+  // 1. Calculate absolute hours for the entire trip
+  const accumulatedEvents = timeline.map((event, i, arr) => {
+    const startHour = arr.slice(0, i).reduce((sum, e) => sum + e.duration, 0);
+    return { ...event, startHour, endHour: startHour + event.duration };
+  });
 
-  const dayStart   = currentDay * 24;
-  const dayEnd     = dayStart + 24;
-  const dayEvents  = accumulated.filter(e => e.endHour > dayStart && e.startHour < dayEnd);
+  const totalHours = accumulatedEvents.length > 0 ? accumulatedEvents[accumulatedEvents.length - 1].endHour : 0;
+  const totalPages = Math.ceil(totalHours / 24) || 1;
 
-  // Build step-graph path
-  const stepPath = (() => {
-    const pts: string[] = [];
-    for (const e of dayEvents) {
-      const cs  = Math.max(e.startHour, dayStart) - dayStart;
-      const ce  = Math.min(e.endHour,   dayEnd)   - dayStart;
-      const ri  = ROWS.indexOf(e.line);
-      const y   = rowMid(ri);
-      const x1  = cs * COL_W;
-      const x2  = ce * COL_W;
-      pts.length === 0 ? pts.push(`M ${x1} ${y}`) : pts.push(`L ${x1} ${y}`);
-      pts.push(`L ${x2} ${y}`);
-    }
-    return pts.join(' ');
-  })();
+  // 2. Slice and clip data for ONLY the currently selected day
+  const dayStartHour = currentDayIndex * 24;
+  const dayEndHour = dayStartHour + 24;
+
+  const currentDayEvents = accumulatedEvents
+    .filter(e => e.startHour < dayEndHour && e.endHour > dayStartHour)
+    .map(e => ({
+      ...e,
+      displayStart: Math.max(0, e.startHour - dayStartHour),
+      displayEnd: Math.min(24, e.endHour - dayStartHour)
+    }));
+
+  // 3. Calculate summary specifically for the visible day
+  const dailySummary = currentDayEvents.reduce((acc, e) => {
+    const duration = e.displayEnd - e.displayStart;
+    return { ...acc, [e.line]: (acc[e.line] || 0) + duration };
+  }, {} as Record<number, number>);
 
   return (
-    <div className="w-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden">
-      {/* Header */}
-      <div className="bg-[#0a0f1d] px-4 py-3 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2">
-        <div className="flex gap-4 flex-wrap">
-          {ROWS.map(l => (
-            <div key={l} className="flex flex-col">
-              <span className="text-[9px] text-slate-500 uppercase tracking-widest">{ROW_LABELS[l]}</span>
-              <span className="text-sm font-bold font-mono" style={{ color: ROW_COLORS[l] }}>
-                {(summary[l] || 0).toFixed(1)}h
-              </span>
+    <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden">
+      
+      {/* --- TOP HEADER & DROPDOWN --- */}
+      <div className="bg-[#0a0f1d] p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div className="flex gap-6">
+          {[1,2,3,4].map(l => (
+            <div key={l}>
+              <div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div>
+              <div className="text-sm font-black text-blue-400">{(dailySummary[l] || 0).toFixed(1)}h</div>
             </div>
           ))}
         </div>
-        <select
-          value={currentDay}
-          onChange={e => setCurrentDay(Number(e.target.value))}
-          className="bg-slate-800 text-white text-xs font-mono px-3 py-1 rounded border border-slate-700 cursor-pointer outline-none hover:border-sky-400"
+        <select 
+          value={currentDayIndex} 
+          onChange={(e) => setCurrentDayIndex(Number(e.target.value))} 
+          className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500"
         >
-          {Array.from({ length: totalDays }, (_, i) => (
+          {Array.from({ length: totalPages }).map((_, i) => (
             <option key={i} value={i}>Day {i + 1}</option>
           ))}
         </select>
       </div>
 
-      {/* Nav */}
-      <div className="bg-[#0a0f1d] px-4 py-2 border-b border-slate-800 flex items-center justify-between">
-        <button
-          onClick={() => setCurrentDay(d => Math.max(0, d - 1))}
-          disabled={currentDay === 0}
-          className="text-xs font-mono font-bold bg-slate-800 px-4 py-1.5 rounded border border-slate-700 text-white
-                     hover:border-sky-400 hover:text-sky-400 disabled:opacity-30 disabled:cursor-default transition-colors"
+      {/* --- NAVIGATION BUTTONS --- */}
+      <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d] shrink-0">
+        <button 
+          onClick={() => setCurrentDayIndex(p => Math.max(0, p - 1))} 
+          disabled={currentDayIndex === 0} 
+          className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30 transition-opacity"
         >
           ← PREV
         </button>
-        <span className="text-xs font-mono font-bold text-sky-400 tracking-widest">
-          DAY {currentDay + 1} / {totalDays}
-        </span>
-        <button
-          onClick={() => setCurrentDay(d => Math.min(totalDays - 1, d + 1))}
-          disabled={currentDay >= totalDays - 1}
-          className="text-xs font-mono font-bold bg-blue-700 px-4 py-1.5 rounded border border-blue-600 text-white
-                     hover:bg-blue-600 hover:border-sky-400 disabled:opacity-30 disabled:cursor-default transition-colors"
+        <span className="text-xs font-bold text-blue-400 flex items-center">DAY {currentDayIndex + 1} / {totalPages}</span>
+        <button 
+          onClick={() => setCurrentDayIndex(p => Math.min(totalPages - 1, p + 1))} 
+          disabled={currentDayIndex >= totalPages - 1} 
+          className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30 transition-opacity"
         >
           NEXT →
         </button>
       </div>
 
-      {/* Grid */}
-      <div className="p-4 overflow-x-auto relative">
-        <svg
-          width={SVG_W}
-          height={SVG_H}
-          viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-          style={{ display: 'block' }}
-        >
-          {/* Row backgrounds */}
-          {ROWS.map((_, ri) => (
-            <rect
-              key={ri}
-              x={0} y={TOP_PAD + ri * ROW_H}
-              width={SVG_W} height={ROW_H}
-              fill={ri % 2 === 0 ? '#090f1e' : '#07091a'}
-            />
+      {/* --- ELD GRAPH (Responsive, Scroll-Free Flex Layout) --- */}
+      {/* THE FIX: overflow-hidden strictly forbids scrollbars. */}
+      <div className="w-full flex-1 flex overflow-hidden bg-[#050811] p-4">
+        
+        {/* Left Side: Y-Axis Labels */}
+        <div className="w-[120px] shrink-0 relative border-r border-slate-800 mr-4">
+          {[1, 2, 3, 4].map(l => (
+            <div 
+              key={l} 
+              style={{ top: `${ROW_Y[l]}px` }}
+              className="absolute w-full -translate-y-1/2 pr-4 text-right font-bold text-[10px] text-slate-300 uppercase tracking-widest"
+            >
+              {ROW_LABELS[l]}
+            </div>
           ))}
-
-          {/* Hour lines + labels */}
-          {Array.from({ length: 25 }, (_, h) => {
-            const x = h * COL_W;
-            const isMajor = h % 6 === 0;
-            return (
-              <g key={h}>
-                <line
-                  x1={x} y1={TOP_PAD - 6} x2={x} y2={TOP_PAD + ROWS.length * ROW_H}
-                  stroke={isMajor ? '#334155' : '#1e293b'}
-                  strokeWidth={isMajor ? 1.5 : 1}
-                />
-                {h < 25 && (
-                  <text
-                    x={x + 2} y={TOP_PAD - 10}
-                    fill={isMajor ? '#94a3b8' : '#475569'}
-                    fontSize={isMajor ? 10 : 8}
-                    fontFamily="Courier New, monospace"
-                    fontWeight={isMajor ? 700 : 400}
-                  >
-                    {String(h).padStart(2, '0')}:00
-                  </text>
-                )}
-              </g>
-            );
-          })}
-
-          {/* Row separators */}
-          {ROWS.map((_, ri) => (
-            <line key={ri}
-              x1={0} y1={TOP_PAD + ri * ROW_H} x2={SVG_W} y2={TOP_PAD + ri * ROW_H}
-              stroke="#1e293b" strokeWidth={1}
-            />
-          ))}
-
-          {/* Step-graph path */}
-          {stepPath && (
-            <path d={stepPath} stroke="#38bdf8" strokeWidth={3} fill="none"
-              strokeLinecap="round" strokeLinejoin="round" />
-          )}
-
-          {/* Event bars */}
-          {dayEvents.map((e, i) => {
-            const cs    = Math.max(e.startHour, dayStart) - dayStart;
-            const ce    = Math.min(e.endHour,   dayEnd)   - dayStart;
-            const ri    = ROWS.indexOf(e.line);
-            const y     = TOP_PAD + ri * ROW_H;
-            const x     = cs * COL_W;
-            const w     = (ce - cs) * COL_W;
-            const color = ROW_COLORS[e.line];
-            const maxChars = Math.floor(w / 6);
-            const label = e.location.length > maxChars
-              ? e.location.slice(0, maxChars - 1) + '…'
-              : e.location;
-
-            return (
+        </div>
+        
+        {/* Right Side: The SVG Grid */}
+        <div ref={gridContainerRef} className="flex-1 relative h-full">
+          <svg width={gridWidth} height={SVG_HEIGHT} style={{ overflow: 'visible' }}>
+            
+            {/* Draw 25 Vertical Grid Lines (00:00 to 24:00) */}
+            {Array.from({ length: 25 }).map((_, i) => (
               <g key={i}>
-                <rect x={x} y={y + 4} width={w} height={ROW_H - 8}
-                  fill={color} opacity={0.12} rx={3} />
-                <rect x={x} y={y + 4} width={w} height={2}
-                  fill={color} opacity={0.6} rx={1} />
-                {e.startHour >= dayStart && (
-                  <circle cx={cs * COL_W} cy={rowMid(ri)} r={4} fill={color} />
-                )}
-                {w > 40 && (
-                  <text
-                    x={x + w / 2} y={rowMid(ri)}
-                    textAnchor="middle" dominantBaseline="central"
-                    fill={color} fontSize={9} fontFamily="Courier New, monospace"
-                    fontWeight={700} opacity={0.9}
-                  >
-                    {label}
-                  </text>
-                )}
-                {/* Faded row label */}
-                <text
-                  x={SVG_W - 4} y={rowMid(ri)}
-                  textAnchor="end" dominantBaseline="central"
-                  fill={color} fontSize={8} fontFamily="Courier New, monospace"
-                  fontWeight={700} opacity={0.35} letterSpacing="0.08em"
-                >
-                  {ROW_LABELS[e.line]}
+                <line x1={i * PIXELS_PER_HOUR} y1="20" x2={i * PIXELS_PER_HOUR} y2="340" stroke="#1e293b" strokeWidth="1" />
+                <text x={i * PIXELS_PER_HOUR} y="10" className="text-[9px] fill-slate-500 font-mono" textAnchor="middle">
+                  {`${String(i).padStart(2, '0')}:00`}
                 </text>
-                {/* Hover hit area */}
-                <rect
-                  x={x} y={y} width={w} height={ROW_H}
-                  fill="transparent" style={{ cursor: 'pointer' }}
-                  onMouseEnter={ev => setTooltip({ x: ev.clientX, y: ev.clientY, ev: e })}
-                  onMouseMove={ev => setTooltip(t => t ? { ...t, x: ev.clientX, y: ev.clientY } : null)}
-                  onMouseLeave={() => setTooltip(null)}
-                />
               </g>
-            );
-          })}
-        </svg>
-
-        {/* Tooltip */}
-        {tooltip && (
-          <div
-            className="fixed z-50 bg-[#0f172a] border border-sky-400 rounded px-3 py-2 text-xs font-mono text-slate-400 pointer-events-none whitespace-nowrap"
-            style={{ left: tooltip.x + 12, top: tooltip.y - 8 }}
-          >
-            <span className="text-sky-400 font-bold">{tooltip.ev.location}</span>
-            <br />
-            {tooltip.ev.description} — {tooltip.ev.duration.toFixed(1)}h
-          </div>
-        )}
+            ))}
+            
+            {/* Draw 4 Horizontal Status Lines */}
+            {[1, 2, 3, 4].map(l => (
+              <line key={l} x1="0" y1={ROW_Y[l]} x2={gridWidth} y2={ROW_Y[l]} stroke="#334155" strokeWidth="1" strokeDasharray="4 4" />
+            ))}
+            
+            {/* Draw the Blue Action Path */}
+            <path d={currentDayEvents.reduce((d, e, i) => {
+              const startX = e.displayStart * PIXELS_PER_HOUR;
+              const endX = e.displayEnd * PIXELS_PER_HOUR;
+              const y = ROW_Y[e.line];
+              return d + (i === 0 ? `M ${startX} ${y} L ${endX} ${y}` : ` L ${startX} ${y} L ${endX} ${y}`);
+            }, "")} stroke="#38bdf8" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            
+            {/* Draw Event Waypoints and Labels */}
+            {currentDayEvents.map((e, i) => (
+              <g key={i}>
+                {/* Node Dot */}
+                <circle cx={e.displayStart * PIXELS_PER_HOUR} cy={ROW_Y[e.line]} r="4" fill="#050811" stroke="#38bdf8" strokeWidth="2" />
+                {/* Vertical Drop Line */}
+                <line x1={e.displayStart * PIXELS_PER_HOUR} y1={ROW_Y[e.line]} x2={e.displayStart * PIXELS_PER_HOUR} y2="360" stroke="#38bdf8" strokeDasharray="2 2" opacity="0.3" />
+                {/* Location Text */}
+                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="375" className="text-[9px] fill-blue-400 font-bold uppercase" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 375)`}>
+                  {e.location}
+                </text>
+                {/* Description Text */}
+                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="388" className="text-[9px] fill-slate-400 italic" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 388)`}>
+                  {e.description}
+                </text>
+              </g>
+            ))}
+          </svg>
+        </div>
       </div>
     </div>
   );
