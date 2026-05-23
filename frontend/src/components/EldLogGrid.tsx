@@ -18,10 +18,10 @@ const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
-  
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  // THE FIX: A ref to hold our debounce timer
   const scrollEndTimeout = useRef<number | null>(null);
+  // ✅ NEW: track the intended destination during programmatic scrolls
+  const intentTargetRef = useRef<number | null>(null);
 
   const PIXELS_PER_HOUR = 120;
   const PAGE_WIDTH = 24 * PIXELS_PER_HOUR;
@@ -32,108 +32,155 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
     return { ...event, startHour, endHour: startHour + event.duration };
   });
 
-  const totalHours = accumulatedEvents.length > 0 ? accumulatedEvents[accumulatedEvents.length - 1].endHour : 0;
+  const totalHours = accumulatedEvents.length > 0
+    ? accumulatedEvents[accumulatedEvents.length - 1].endHour
+    : 0;
   const totalPages = Math.ceil(totalHours / 24) || 1;
   const SVG_WIDTH = Math.max(totalHours * PIXELS_PER_HOUR, PAGE_WIDTH);
 
-  // Commands DOM to scroll smoothly
   const scrollToDay = (targetIndex: number) => {
+    // ✅ Record intent BEFORE triggering scroll — handler will ignore events until scroll settles
+    intentTargetRef.current = targetIndex;
+    setCurrentDayIndex(targetIndex);
+
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
         left: targetIndex * PAGE_WIDTH,
-        behavior: 'smooth'
+        behavior: 'smooth',
       });
     }
   };
 
-  // THE FIX: Debounced Scroll Listener
   const handleScroll = () => {
-    // 1. If a scroll event fires, clear the pending timeout
     if (scrollEndTimeout.current) window.clearTimeout(scrollEndTimeout.current);
 
-    // 2. Set a new timeout. This code ONLY executes when the scrolling has completely stopped for 150ms.
     scrollEndTimeout.current = window.setTimeout(() => {
       if (scrollContainerRef.current) {
-        const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
-        
-        // Use a functional state update to prevent stale state closures
-        setCurrentDayIndex((prev) => {
-          if (newIndex !== prev && newIndex >= 0 && newIndex < totalPages) {
-            return newIndex;
-          }
-          return prev;
-        });
+        const snappedIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
+        const clampedIndex = Math.max(0, Math.min(snappedIndex, totalPages - 1));
+
+        if (intentTargetRef.current !== null) {
+          // ✅ This was a programmatic scroll — just clear the lock and trust the state we already set
+          intentTargetRef.current = null;
+        } else {
+          // ✅ This was a genuine user scroll (touch swipe, trackpad, etc.) — sync state to position
+          setCurrentDayIndex(clampedIndex);
+        }
       }
     }, 150);
   };
 
-  // Cleanup timeout if component unmounts
   useEffect(() => {
     return () => {
       if (scrollEndTimeout.current) window.clearTimeout(scrollEndTimeout.current);
     };
   }, []);
 
-  const summary = timeline.reduce((acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }), {} as any);
+  const summary = timeline.reduce(
+    (acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }),
+    {} as Record<number, number>
+  );
 
   return (
     <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden relative">
       <div className="bg-[#0a0f1d] p-4 border-b border-slate-800 flex items-center justify-between">
         <div className="flex gap-6">
-          {[1,2,3,4].map(l => (
-            <div key={l}><div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div><div className="text-sm font-black text-blue-400">{(summary[l] || 0).toFixed(1)}h</div></div>
+          {[1, 2, 3, 4].map(l => (
+            <div key={l}>
+              <div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div>
+              <div className="text-sm font-black text-blue-400">{(summary[l] || 0).toFixed(1)}h</div>
+            </div>
           ))}
         </div>
-        <select 
-          value={currentDayIndex} 
-          onChange={(e) => scrollToDay(Number(e.target.value))} 
+        <select
+          value={currentDayIndex}
+          onChange={(e) => scrollToDay(Number(e.target.value))}
           className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer"
         >
-          {Array.from({ length: totalPages }).map((_, i) => <option key={i} value={i}>Day {i + 1}</option>)}
+          {Array.from({ length: totalPages }).map((_, i) => (
+            <option key={i} value={i}>Day {i + 1}</option>
+          ))}
         </select>
       </div>
 
       <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d]">
-        <button 
-          onClick={() => scrollToDay(Math.max(0, currentDayIndex - 1))} 
-          disabled={currentDayIndex === 0} 
+        <button
+          onClick={() => scrollToDay(Math.max(0, currentDayIndex - 1))}
+          disabled={currentDayIndex === 0}
           className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
         >
           ← PREV
         </button>
-        <span className="text-xs font-bold text-blue-400 flex items-center">DAY {currentDayIndex + 1} / {totalPages}</span>
-        <button 
-          onClick={() => scrollToDay(Math.min(totalPages - 1, currentDayIndex + 1))} 
-          disabled={currentDayIndex >= totalPages - 1} 
+        <span className="text-xs font-bold text-blue-400 flex items-center">
+          DAY {currentDayIndex + 1} / {totalPages}
+        </span>
+        <button
+          onClick={() => scrollToDay(Math.min(totalPages - 1, currentDayIndex + 1))}
+          disabled={currentDayIndex >= totalPages - 1}
           className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
         >
           NEXT →
         </button>
       </div>
 
-      <div ref={scrollContainerRef} onScroll={handleScroll} className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]"
+      >
         <div className="absolute left-0 top-[180px] w-[160px] z-10 flex flex-col bg-[#050811]">
-          {[1, 2, 3, 4].map(l => <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">{ROW_LABELS[l]}</div>)}
+          {[1, 2, 3, 4].map(l => (
+            <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">
+              {ROW_LABELS[l]}
+            </div>
+          ))}
         </div>
         <div style={{ width: `${SVG_WIDTH + 200}px`, height: '100%' }}>
           <svg width={SVG_WIDTH + 200} height={SVG_HEIGHT} style={{ overflow: 'visible' }}>
             {Array.from({ length: Math.ceil(totalHours) + 1 }).map((_, i) => (
               <g key={i}>
                 <line x1={i * PIXELS_PER_HOUR} y1="40" x2={i * PIXELS_PER_HOUR} y2="360" stroke="#1e293b" strokeWidth="1" />
-                <text x={i * PIXELS_PER_HOUR} y="380" className="text-[10px] fill-slate-500" textAnchor="middle">{`${String(i % 24).padStart(2, '0')}:00`}</text>
+                <text x={i * PIXELS_PER_HOUR} y="380" className="text-[10px] fill-slate-500" textAnchor="middle">
+                  {`${String(i % 24).padStart(2, '0')}:00`}
+                </text>
               </g>
             ))}
-            {[1, 2, 3, 4].map(l => <line key={l} x1="0" y1={ROW_Y[l]} x2={SVG_WIDTH} y2={ROW_Y[l]} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" />)}
-            <path d={accumulatedEvents.reduce((d, e, i) => {
-              const startX = e.startHour * PIXELS_PER_HOUR, endX = e.endHour * PIXELS_PER_HOUR, y = ROW_Y[e.line];
-              return d + (i === 0 ? `M ${startX} ${y} L ${endX} ${y}` : ` L ${startX} ${y} L ${endX} ${y}`);
-            }, "")} stroke="#38bdf8" strokeWidth="6" fill="none" />
+            {[1, 2, 3, 4].map(l => (
+              <line key={l} x1="0" y1={ROW_Y[l]} x2={SVG_WIDTH} y2={ROW_Y[l]} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" />
+            ))}
+            <path
+              d={accumulatedEvents.reduce((d, e, i) => {
+                const startX = e.startHour * PIXELS_PER_HOUR;
+                const endX = e.endHour * PIXELS_PER_HOUR;
+                const y = ROW_Y[e.line];
+                return d + (i === 0 ? `M ${startX} ${y} L ${endX} ${y}` : ` L ${startX} ${y} L ${endX} ${y}`);
+              }, '')}
+              stroke="#38bdf8"
+              strokeWidth="6"
+              fill="none"
+            />
             {accumulatedEvents.map((e, i) => (
               <g key={i}>
                 <circle cx={e.startHour * PIXELS_PER_HOUR} cy={ROW_Y[e.line]} r="5" fill="#38bdf8" />
-                <line x1={e.startHour * PIXELS_PER_HOUR} y1={ROW_Y[e.line]} x2={e.startHour * PIXELS_PER_HOUR} y2="420" stroke="#38bdf8" strokeDasharray="4 4" opacity="0.5" />
-                <text x={e.startHour * PIXELS_PER_HOUR + 5} y="440" className="text-[10px] fill-blue-400 font-bold uppercase" transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 440)`}>{e.location}</text>
-                <text x={e.startHour * PIXELS_PER_HOUR + 5} y="460" className="text-[10px] fill-slate-400 italic" transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 460)`}>{e.description}</text>
+                <line
+                  x1={e.startHour * PIXELS_PER_HOUR} y1={ROW_Y[e.line]}
+                  x2={e.startHour * PIXELS_PER_HOUR} y2="420"
+                  stroke="#38bdf8" strokeDasharray="4 4" opacity="0.5"
+                />
+                <text
+                  x={e.startHour * PIXELS_PER_HOUR + 5} y="440"
+                  className="text-[10px] fill-blue-400 font-bold uppercase"
+                  transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 440)`}
+                >
+                  {e.location}
+                </text>
+                <text
+                  x={e.startHour * PIXELS_PER_HOUR + 5} y="460"
+                  className="text-[10px] fill-slate-400 italic"
+                  transform={`rotate(-45 ${e.startHour * PIXELS_PER_HOUR + 5} 460)`}
+                >
+                  {e.description}
+                </text>
               </g>
             ))}
           </svg>
