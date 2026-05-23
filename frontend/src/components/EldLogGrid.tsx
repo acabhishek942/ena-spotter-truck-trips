@@ -14,32 +14,18 @@ interface EldLogGridProps {
 const ROW_LABELS: Record<number, string> = {
   1: 'OFF DUTY', 2: 'SLEEPER BERTH', 3: 'DRIVING', 4: 'ON DUTY',
 };
-// Precise Y coordinates for the 4 rows
-const ROW_Y: Record<number, number> = { 1: 60, 2: 140, 3: 220, 4: 300 };
-const SVG_HEIGHT = 450;
+const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
-  
-  // THE FIX: Refs and State to track the exact width of the user's screen
-  const gridContainerRef = useRef<HTMLDivElement>(null);
-  const [gridWidth, setGridWidth] = useState(800); // Default fallback width
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Dynamically measure the container so the 24 hours fit exactly without a scrollbar
-  useEffect(() => {
-    if (!gridContainerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      // Subtract a small buffer (20px) to ensure no edge bleed
-      setGridWidth(entries[0].contentRect.width - 20); 
-    });
-    observer.observe(gridContainerRef.current);
-    return () => observer.disconnect();
-  }, []);
+  // Fixed 120px per hour. 24 hours = 2880px wide.
+  const PIXELS_PER_HOUR = 120;
+  const PAGE_WIDTH = 24 * PIXELS_PER_HOUR; 
+  const SVG_HEIGHT = 500;
 
-  // Now, 1 hour dynamically shrinks or grows to fit the screen
-  const PIXELS_PER_HOUR = gridWidth / 24;
-
-  // 1. Calculate absolute hours for the entire trip
+  // 1. Calculate absolute hours for the whole trip
   const accumulatedEvents = timeline.map((event, i, arr) => {
     const startHour = arr.slice(0, i).reduce((sum, e) => sum + e.duration, 0);
     return { ...event, startHour, endHour: startHour + event.duration };
@@ -48,7 +34,7 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const totalHours = accumulatedEvents.length > 0 ? accumulatedEvents[accumulatedEvents.length - 1].endHour : 0;
   const totalPages = Math.ceil(totalHours / 24) || 1;
 
-  // 2. Slice and clip data for ONLY the currently selected day
+  // 2. ISOLATE DATA: Only grab events for the currently selected day
   const dayStartHour = currentDayIndex * 24;
   const dayEndHour = dayStartHour + 24;
 
@@ -56,20 +42,28 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
     .filter(e => e.startHour < dayEndHour && e.endHour > dayStartHour)
     .map(e => ({
       ...e,
+      // Map global hours to 0-24 local display hours
       displayStart: Math.max(0, e.startHour - dayStartHour),
       displayEnd: Math.min(24, e.endHour - dayStartHour)
     }));
 
-  // 3. Calculate summary specifically for the visible day
+  // 3. Daily Summary specifically for the isolated 24 hours
   const dailySummary = currentDayEvents.reduce((acc, e) => {
     const duration = e.displayEnd - e.displayStart;
     return { ...acc, [e.line]: (acc[e.line] || 0) + duration };
   }, {} as Record<number, number>);
 
+  // Reset scroll to 00:00 (left) ONLY when the user clicks next/prev day
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft = 0;
+    }
+  }, [currentDayIndex]);
+
   return (
-    <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden">
+    <div className="w-full h-full flex flex-col bg-[#050811] rounded-xl border border-slate-800 shadow-2xl overflow-hidden relative">
       
-      {/* --- TOP HEADER & DROPDOWN --- */}
+      {/* --- HEADER --- */}
       <div className="bg-[#0a0f1d] p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
         <div className="flex gap-6">
           {[1,2,3,4].map(l => (
@@ -82,7 +76,7 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
         <select 
           value={currentDayIndex} 
           onChange={(e) => setCurrentDayIndex(Number(e.target.value))} 
-          className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500"
+          className="bg-slate-800 text-white text-xs px-3 py-1 rounded border border-slate-700 cursor-pointer"
         >
           {Array.from({ length: totalPages }).map((_, i) => (
             <option key={i} value={i}>Day {i + 1}</option>
@@ -90,12 +84,12 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
         </select>
       </div>
 
-      {/* --- NAVIGATION BUTTONS --- */}
+      {/* --- BUTTONS --- */}
       <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d] shrink-0">
         <button 
           onClick={() => setCurrentDayIndex(p => Math.max(0, p - 1))} 
           disabled={currentDayIndex === 0} 
-          className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30 transition-opacity"
+          className="text-xs bg-slate-800 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
         >
           ← PREV
         </button>
@@ -103,69 +97,62 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
         <button 
           onClick={() => setCurrentDayIndex(p => Math.min(totalPages - 1, p + 1))} 
           disabled={currentDayIndex >= totalPages - 1} 
-          className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30 transition-opacity"
+          className="text-xs bg-blue-600 px-4 py-1.5 rounded text-white font-bold disabled:opacity-30"
         >
           NEXT →
         </button>
       </div>
 
-      {/* --- ELD GRAPH (Responsive, Scroll-Free Flex Layout) --- */}
-      {/* THE FIX: overflow-hidden strictly forbids scrollbars. */}
-      <div className="w-full flex-1 flex overflow-hidden bg-[#050811] p-4">
+      {/* --- THE 24-HOUR SCROLL CANVAS --- */}
+      {/* overflow-x-auto creates the scrollbar. It ONLY scrolls the 2880px width of ONE day. */}
+      {/* NO onScroll event listener attached. Pure native browser scrolling. */}
+      <div ref={scrollContainerRef} className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]">
         
-        {/* Left Side: Y-Axis Labels */}
-        <div className="w-[120px] shrink-0 relative border-r border-slate-800 mr-4">
+        {/* Y-Axis Labels - Fixed Position */}
+        <div className="absolute left-0 top-[180px] w-[160px] z-10 flex flex-col bg-[#050811]">
           {[1, 2, 3, 4].map(l => (
-            <div 
-              key={l} 
-              style={{ top: `${ROW_Y[l]}px` }}
-              className="absolute w-full -translate-y-1/2 pr-4 text-right font-bold text-[10px] text-slate-300 uppercase tracking-widest"
-            >
+            <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">
               {ROW_LABELS[l]}
             </div>
           ))}
         </div>
         
-        {/* Right Side: The SVG Grid */}
-        <div ref={gridContainerRef} className="flex-1 relative h-full">
-          <svg width={gridWidth} height={SVG_HEIGHT} style={{ overflow: 'visible' }}>
+        {/* SVG Container - Exactly 2880px wide + padding */}
+        <div style={{ width: `${PAGE_WIDTH + 100}px`, height: '100%' }}>
+          <svg width={PAGE_WIDTH + 100} height={SVG_HEIGHT} style={{ overflow: 'visible' }}>
             
-            {/* Draw 25 Vertical Grid Lines (00:00 to 24:00) */}
+            {/* Draw exactly 24 Vertical Grid Lines */}
             {Array.from({ length: 25 }).map((_, i) => (
               <g key={i}>
-                <line x1={i * PIXELS_PER_HOUR} y1="20" x2={i * PIXELS_PER_HOUR} y2="340" stroke="#1e293b" strokeWidth="1" />
-                <text x={i * PIXELS_PER_HOUR} y="10" className="text-[9px] fill-slate-500 font-mono" textAnchor="middle">
+                <line x1={i * PIXELS_PER_HOUR} y1="40" x2={i * PIXELS_PER_HOUR} y2="360" stroke="#1e293b" strokeWidth="1" />
+                <text x={i * PIXELS_PER_HOUR} y="380" className="text-[10px] fill-slate-500" textAnchor="middle">
                   {`${String(i).padStart(2, '0')}:00`}
                 </text>
               </g>
             ))}
             
-            {/* Draw 4 Horizontal Status Lines */}
+            {/* Horizontal Status Lines */}
             {[1, 2, 3, 4].map(l => (
-              <line key={l} x1="0" y1={ROW_Y[l]} x2={gridWidth} y2={ROW_Y[l]} stroke="#334155" strokeWidth="1" strokeDasharray="4 4" />
+              <line key={l} x1="0" y1={ROW_Y[l]} x2={PAGE_WIDTH} y2={ROW_Y[l]} stroke="#475569" strokeWidth="2" strokeDasharray="6 6" />
             ))}
             
-            {/* Draw the Blue Action Path */}
+            {/* Draw Path for THIS DAY ONLY */}
             <path d={currentDayEvents.reduce((d, e, i) => {
               const startX = e.displayStart * PIXELS_PER_HOUR;
               const endX = e.displayEnd * PIXELS_PER_HOUR;
               const y = ROW_Y[e.line];
               return d + (i === 0 ? `M ${startX} ${y} L ${endX} ${y}` : ` L ${startX} ${y} L ${endX} ${y}`);
-            }, "")} stroke="#38bdf8" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            }, "")} stroke="#38bdf8" strokeWidth="6" fill="none" />
             
-            {/* Draw Event Waypoints and Labels */}
+            {/* Draw Events for THIS DAY ONLY */}
             {currentDayEvents.map((e, i) => (
               <g key={i}>
-                {/* Node Dot */}
-                <circle cx={e.displayStart * PIXELS_PER_HOUR} cy={ROW_Y[e.line]} r="4" fill="#050811" stroke="#38bdf8" strokeWidth="2" />
-                {/* Vertical Drop Line */}
-                <line x1={e.displayStart * PIXELS_PER_HOUR} y1={ROW_Y[e.line]} x2={e.displayStart * PIXELS_PER_HOUR} y2="360" stroke="#38bdf8" strokeDasharray="2 2" opacity="0.3" />
-                {/* Location Text */}
-                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="375" className="text-[9px] fill-blue-400 font-bold uppercase" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 375)`}>
+                <circle cx={e.displayStart * PIXELS_PER_HOUR} cy={ROW_Y[e.line]} r="5" fill="#38bdf8" />
+                <line x1={e.displayStart * PIXELS_PER_HOUR} y1={ROW_Y[e.line]} x2={e.displayStart * PIXELS_PER_HOUR} y2="420" stroke="#38bdf8" strokeDasharray="4 4" opacity="0.5" />
+                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="440" className="text-[10px] fill-blue-400 font-bold uppercase" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 440)`}>
                   {e.location}
                 </text>
-                {/* Description Text */}
-                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="388" className="text-[9px] fill-slate-400 italic" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 388)`}>
+                <text x={e.displayStart * PIXELS_PER_HOUR + 5} y="460" className="text-[10px] fill-slate-400 italic" transform={`rotate(-45 ${e.displayStart * PIXELS_PER_HOUR + 5} 460)`}>
                   {e.description}
                 </text>
               </g>
