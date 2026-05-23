@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ena-backend
+    env: python
+    rootDir: backend # Points to your backend folder
+    buildCommand: |
+      apt-get update && apt-get install -y gdal-bin libgdal-dev
+      pip install -r requirements.txt
+      python manage.py collectstatic --noinput
+      python manage.py migrate
+    startCommand: gunicorn backend.wsgi:application
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotter_eld_instance # Must match the name you gave your DB in Phase 1
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
