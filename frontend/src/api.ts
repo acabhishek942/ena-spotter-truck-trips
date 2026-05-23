@@ -11,8 +11,12 @@ export interface HOSResponse {
   }>;
 }
 
+export const API_BASE_URL = import.meta.env.PROD 
+  ? 'https://ena-spotter-truck-trips.onrender.com' 
+  : 'http://127.0.0.1:8000';
+
 export const fetchTripPlan = async (payload: any): Promise<HOSResponse> => {
-  const response = await fetch('http://127.0.0.1:8000/api/v1/trips/plan/', {
+  const response = await fetch(`${API_BASE_URL}/api/v1/trips/plan/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
