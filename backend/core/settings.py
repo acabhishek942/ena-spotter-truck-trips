@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 from dotenv import load_dotenv
 import platform
 import dj_database_url
@@ -21,9 +22,10 @@ if platform.system() == 'Darwin':
     GEOS_LIBRARY_PATH = '/opt/homebrew/lib/libgeos_c.dylib'
     SPATIALITE_LIBRARY_PATH = '/opt/homebrew/lib/mod_spatialite.dylib'
 
-if platform.system() == 'Linux':
-    GDAL_LIBRARY_PATH = '/usr/lib/libgdal.so'
-    GEOS_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu/libgeos_c.so'
+# Check if we are running in the linux container environment
+if sys.platform == "linux" or sys.platform == "linux2":
+    GDAL_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu/libgdal.so"
+    GEOS_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu/libgeos_c.so"
     # Sometimes required for SpatiaLite on Linux:
     # SPATIALITE_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu/mod_spatialite.so'
 
