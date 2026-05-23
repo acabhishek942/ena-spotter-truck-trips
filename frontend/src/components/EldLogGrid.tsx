@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export interface BackendTimelineEvent {
   line: number;
@@ -18,7 +18,10 @@ const ROW_Y: Record<number, number> = { 1: 80, 2: 160, 3: 240, 4: 320 };
 
 export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
+  
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // THE FIX: A ref to hold our debounce timer
+  const scrollEndTimeout = useRef<number | null>(null);
 
   const PIXELS_PER_HOUR = 120;
   const PAGE_WIDTH = 24 * PIXELS_PER_HOUR;
@@ -33,8 +36,7 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
   const totalPages = Math.ceil(totalHours / 24) || 1;
   const SVG_WIDTH = Math.max(totalHours * PIXELS_PER_HOUR, PAGE_WIDTH);
 
-  // --- THE FIX: DOM-Only Scroll Command ---
-  // This ONLY commands the browser to move. It does NOT update React state.
+  // Commands DOM to scroll smoothly
   const scrollToDay = (targetIndex: number) => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
@@ -44,16 +46,33 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
     }
   };
 
-  // --- THE FIX: Passive State Listener ---
-  // This watches the native scroll. When it crosses the 50% mark of a new day, it updates the UI.
+  // THE FIX: Debounced Scroll Listener
   const handleScroll = () => {
-    if (scrollContainerRef.current) {
-      const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
-      if (newIndex !== currentDayIndex && newIndex >= 0 && newIndex < totalPages) {
-        setCurrentDayIndex(newIndex);
+    // 1. If a scroll event fires, clear the pending timeout
+    if (scrollEndTimeout.current) window.clearTimeout(scrollEndTimeout.current);
+
+    // 2. Set a new timeout. This code ONLY executes when the scrolling has completely stopped for 150ms.
+    scrollEndTimeout.current = window.setTimeout(() => {
+      if (scrollContainerRef.current) {
+        const newIndex = Math.round(scrollContainerRef.current.scrollLeft / PAGE_WIDTH);
+        
+        // Use a functional state update to prevent stale state closures
+        setCurrentDayIndex((prev) => {
+          if (newIndex !== prev && newIndex >= 0 && newIndex < totalPages) {
+            return newIndex;
+          }
+          return prev;
+        });
       }
-    }
+    }, 150);
   };
+
+  // Cleanup timeout if component unmounts
+  useEffect(() => {
+    return () => {
+      if (scrollEndTimeout.current) window.clearTimeout(scrollEndTimeout.current);
+    };
+  }, []);
 
   const summary = timeline.reduce((acc, e) => ({ ...acc, [e.line]: (acc[e.line] || 0) + e.duration }), {} as any);
 
@@ -65,7 +84,6 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
             <div key={l}><div className="text-[9px] text-slate-500 uppercase">{ROW_LABELS[l]}</div><div className="text-sm font-black text-blue-400">{(summary[l] || 0).toFixed(1)}h</div></div>
           ))}
         </div>
-        {/* Dropdown commands the DOM scroll */}
         <select 
           value={currentDayIndex} 
           onChange={(e) => scrollToDay(Number(e.target.value))} 
@@ -76,7 +94,6 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
       </div>
 
       <div className="p-2 border-b border-slate-800 flex justify-between bg-[#0a0f1d]">
-        {/* Prev button commands the DOM scroll */}
         <button 
           onClick={() => scrollToDay(Math.max(0, currentDayIndex - 1))} 
           disabled={currentDayIndex === 0} 
@@ -85,7 +102,6 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
           ← PREV
         </button>
         <span className="text-xs font-bold text-blue-400 flex items-center">DAY {currentDayIndex + 1} / {totalPages}</span>
-        {/* Next button commands the DOM scroll */}
         <button 
           onClick={() => scrollToDay(Math.min(totalPages - 1, currentDayIndex + 1))} 
           disabled={currentDayIndex >= totalPages - 1} 
@@ -95,7 +111,6 @@ export default function EldLogGrid({ timeline = [] }: EldLogGridProps) {
         </button>
       </div>
 
-      {/* The passive listener that updates the UI */}
       <div ref={scrollContainerRef} onScroll={handleScroll} className="w-full flex-1 overflow-x-auto p-6 scrollbar-thin scrollbar-thumb-blue-600 pl-[180px]">
         <div className="absolute left-0 top-[180px] w-[160px] z-10 flex flex-col bg-[#050811]">
           {[1, 2, 3, 4].map(l => <div key={l} className="h-[80px] flex items-center justify-center font-bold text-[11px] text-slate-300 uppercase tracking-widest">{ROW_LABELS[l]}</div>)}
